@@ -3,6 +3,8 @@ use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{ConnectionExt, ImageFormat};
 use x11rb::rust_connection::RustConnection;
 use image::{ImageBuffer, Rgba};
+use spidev::{Spidev, SpidevOptions, SpiModeFlags};
+use std::io::Write;
 
 fn main() -> Result<()> {
     let (conn, screen_num) = RustConnection::connect(None)?;
@@ -36,10 +38,31 @@ fn main() -> Result<()> {
         }
     }
 
-    buffer.save("screenshot.png")?;
-    println!("Скриншот сохранён как screenshot.png");
+    // Prepare SPI using spidev
+    let mut spi = Spidev::open("/dev/spidev3.0")?;
+    let options = SpidevOptions::new()
+        .bits_per_word(8)
+        .max_speed_hz(8_000_000)
+        .mode(SpiModeFlags::SPI_MODE_0)
+        .build();
+    spi.configure(&options)?;
 
+    // Convert buffer to raw RGB data for SPI (strip alpha)
+    let mut spi_data = Vec::with_capacity((width * height * 3) as usize);
+    for pixel in buffer.pixels() {
+        spi_data.push(pixel[0]); // R
+        spi_data.push(pixel[1]); // G
+        spi_data.push(pixel[2]); // B
+    }
 
+    // Send data over SPI in chunks
+    let chunk_size = 4096;
+    for chunk in spi_data.chunks(chunk_size) {
+        spi.write_all(chunk)?;
+    }
+
+    println!("Изображение отправлено на дисплей через SPI");
 
     Ok(())
 }
+
